@@ -1,0 +1,694 @@
+import { fireEvent, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it } from "vitest";
+import { ToolExecutionStrip } from "@/components/chat/ToolExecutionStrip";
+import type { ToolExecutionBlockData } from "@/api/types";
+import { useCodeStudioStore } from "@/stores/code-studio-store";
+
+describe("ToolExecutionStrip", () => {
+  beforeEach(() => {
+    useCodeStudioStore.setState({
+      activeSessionId: null,
+      sessions: {},
+    });
+  });
+
+  it("renders CodeStudioCard when tool_create_visual_code returns a visual_session_id in result payload", () => {
+    useCodeStudioStore.setState({
+      activeSessionId: "vs_app_1",
+      sessions: {
+        vs_app_1: {
+          sessionId: "vs_app_1",
+          title: "Pendulum App",
+          language: "html",
+          status: "complete",
+          code: "<div>app</div>",
+          versions: [
+            {
+              version: 1,
+              code: "<div>app</div>",
+              title: "Pendulum App",
+              timestamp: Date.now(),
+            },
+          ],
+          activeVersion: 1,
+          chunkCount: 1,
+          totalBytes: 14,
+          visualSessionId: "vs_app_1",
+          createdAt: Date.now(),
+          metadata: { studioLane: "app" },
+        },
+      },
+    });
+
+    const block: ToolExecutionBlockData = {
+      type: "tool_execution",
+      id: "tool-code-1",
+      status: "completed",
+      tool: {
+        id: "tool-code-1",
+        name: "tool_create_visual_code",
+        args: {
+          title: "Pendulum App",
+        },
+        result: JSON.stringify({
+          visual_session_id: "vs_app_1",
+        }),
+      },
+    };
+
+    render(<ToolExecutionStrip block={block} />);
+
+    expect(screen.getByText("Pendulum App")).toBeTruthy();
+    expect(screen.getByText("Xem mã")).toBeTruthy();
+    expect(screen.getByText("Xem trước")).toBeTruthy();
+  });
+
+  it("resolves CodeStudioCard through a mapped visual_session_id", () => {
+    const store = useCodeStudioStore.getState();
+    store.openSession("cs_mapped", "Mapped Pendulum App", "html", 1, {
+      studioLane: "app",
+    });
+    store.completeSession(
+      "cs_mapped",
+      "<div>app</div>",
+      "html",
+      1,
+      undefined,
+      "vs_mapped",
+    );
+
+    const block: ToolExecutionBlockData = {
+      type: "tool_execution",
+      id: "tool-code-mapped",
+      status: "completed",
+      tool: {
+        id: "tool-code-mapped",
+        name: "tool_create_visual_code",
+        args: {
+          title: "Mapped Pendulum App",
+        },
+        result: JSON.stringify({
+          visual_session_id: "vs_mapped",
+        }),
+      },
+    };
+
+    render(<ToolExecutionStrip block={block} />);
+
+    expect(screen.getByText("Mapped Pendulum App")).toBeTruthy();
+    expect(screen.getByText("Xem trước")).toBeTruthy();
+  });
+
+  it("renders CodeStudioCard via _code_studio_session_id injected by SSE handler", () => {
+    useCodeStudioStore.setState({
+      activeSessionId: "cs_abc",
+      sessions: {
+        cs_abc: {
+          sessionId: "cs_abc",
+          title: "Wave Simulation",
+          language: "html",
+          status: "streaming",
+          code: [
+            "<style></style><canvas></canvas><button>Run</button>",
+            "<script>window.WiiiVisualBridge.reportResult()</script>",
+          ].join(""),
+          versions: [],
+          activeVersion: 1,
+          chunkCount: 3,
+          totalBytes: 22,
+          createdAt: Date.now(),
+          metadata: {},
+        },
+      },
+    });
+
+    const block: ToolExecutionBlockData = {
+      type: "tool_execution",
+      id: "tool-code-2",
+      status: "pending",
+      tool: {
+        id: "tool-code-2",
+        name: "tool_create_visual_code",
+        args: {
+          title: "Wave Simulation",
+          _code_studio_session_id: "cs_abc",
+        },
+      },
+    };
+
+    render(<ToolExecutionStrip block={block} />);
+
+    expect(screen.getByText("Wave Simulation")).toBeTruthy();
+    expect(screen.getByText(/Điều khiển/)).toBeTruthy();
+    expect(screen.getByText(/Kết nối/)).toBeTruthy();
+  });
+
+  it("hides raw python code and filesystem paths by default", () => {
+    const block: ToolExecutionBlockData = {
+      type: "tool_execution",
+      id: "tool-1",
+      status: "completed",
+      tool: {
+        id: "tool-1",
+        name: "tool_execute_python",
+        args: {
+          code: "import matplotlib.pyplot as plt\nplt.savefig('chart.png')",
+        },
+        result: [
+          "Output: Bieu do da tao thanh cong!",
+          "Artifacts:",
+          "- chart.png (image/png) -> /home/appuser/.wiii/workspace/generated/chart_20260309.png",
+        ].join("\n"),
+      },
+    };
+
+    render(<ToolExecutionStrip block={block} />);
+
+    expect(
+      screen.getByText("Script Python để tạo biểu đồ chart.png"),
+    ).toBeTruthy();
+    expect(screen.queryByText("Đã tạo 1 tệp: chart.png")).toBeNull();
+    expect(screen.queryByText(/import matplotlib/i)).toBeNull();
+    expect(screen.queryByText(/\/home\/appuser/i)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /Chạy mã Python/i }));
+    expect(screen.getByText("Đã tạo 1 tệp: chart.png")).toBeTruthy();
+  });
+
+  it("reveals sanitized technical detail only when expanded", () => {
+    const block: ToolExecutionBlockData = {
+      type: "tool_execution",
+      id: "tool-2",
+      status: "completed",
+      tool: {
+        id: "tool-2",
+        name: "tool_execute_python",
+        args: {
+          code: "print('hello')\nplt.savefig('demo.png')",
+        },
+        result:
+          "Output: done\nArtifacts:\n- demo.png (image/png) -> C:\\temp\\generated\\demo.png",
+      },
+    };
+
+    render(<ToolExecutionStrip block={block} />);
+
+    expect(
+      screen.queryByRole("region", { name: "Chi tiết script" }),
+    ).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /Chạy mã Python/i }));
+
+    const detail = screen.getByRole("region", { name: "Chi tiết script" });
+    expect(detail).toBeTruthy();
+    expect(screen.getByText(/print\('hello'\)/i)).toBeTruthy();
+    expect(screen.queryByText(/C:\\temp\\generated/i)).toBeNull();
+    expect(detail.textContent || "").toContain("demo.png");
+  });
+
+  it("uses softer phrasing for visual generation strips", () => {
+    const block: ToolExecutionBlockData = {
+      type: "tool_execution",
+      id: "tool-visual-1",
+      status: "completed",
+      tool: {
+        id: "tool-visual-1",
+        name: "tool_generate_visual",
+        args: {
+          title: "Softmax vs linear attention",
+        },
+        result: '{"title":"Softmax vs linear attention"}',
+      },
+    };
+
+    render(<ToolExecutionStrip block={block} />);
+
+    expect(
+      screen.getByText(
+        "Đang phác thảo minh họa cho: Softmax vs linear attention",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.queryByText("Đã chèn minh họa ngay trong câu trả lời"),
+    ).toBeNull();
+    expect(screen.queryByText(/ky thuat/i)).toBeNull();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /Dựng visual giải thích/i }),
+    );
+    expect(
+      screen.getByText("Đã chèn minh họa ngay trong câu trả lời"),
+    ).toBeTruthy();
+  });
+
+  it("shows a professional web-search trace while keeping results collapsed", () => {
+    const block: ToolExecutionBlockData = {
+      type: "tool_execution",
+      id: "tool-search-1",
+      status: "completed",
+      tool: {
+        id: "tool-search-1",
+        name: "tool_web_search",
+        args: {
+          query: "thời tiết Hải Phòng hôm nay",
+        },
+        result: JSON.stringify([
+          {
+            title: "Dự báo thời tiết Hải Phòng",
+            url: "https://weather.gov.vn/hai-phong",
+            snippet: "Thông tin dự báo trong ngày.",
+          },
+        ]),
+      },
+    };
+
+    render(<ToolExecutionStrip block={block} />);
+
+    const strip = screen.getByTestId("tool-execution-strip");
+    expect(strip.getAttribute("data-tool-kind")).toBe("search");
+    expect(screen.getByText("Tìm kiếm web")).toBeTruthy();
+    expect(screen.getByText("Đã xong")).toBeTruthy();
+    expect(screen.getByText("Truy vấn")).toBeTruthy();
+    expect(screen.getByText("thời tiết Hải Phòng hôm nay")).toBeTruthy();
+    expect(screen.queryByText("Dự báo thời tiết Hải Phòng")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /Tìm kiếm web/i }));
+
+    expect(screen.getByText("Nguồn tìm được")).toBeTruthy();
+    expect(screen.getByText("Dự báo thời tiết Hải Phòng")).toBeTruthy();
+    expect(screen.getByText("weather.gov.vn")).toBeTruthy();
+    expect(strip.textContent || "").not.toContain('"snippet"');
+  });
+
+  it("shows source-count metadata once for summarized search results", () => {
+    const block: ToolExecutionBlockData = {
+      type: "tool_execution",
+      id: "tool-search-meta",
+      status: "completed",
+      tool: {
+        id: "tool-search-meta",
+        name: "tool_web_search",
+        args: {
+          query: "thời tiết Hải Phòng hiện tại",
+        },
+        result:
+          "Tìm được 5 nguồn: giaiphaphutam.com, nchmf.gov.vn, ventusky.com +2",
+        metadata: {
+          schema_version: "tool_result_metadata.v1",
+          status: "completed",
+          result_kind: "web_sources",
+          source_count: 5,
+          domains: [
+            "giaiphaphutam.com",
+            "nchmf.gov.vn",
+            "ventusky.com",
+            "accuweather.com",
+            "weather.com",
+          ],
+        },
+      },
+    };
+
+    render(<ToolExecutionStrip block={block} />);
+    fireEvent.click(screen.getByRole("button", { name: /Tìm kiếm web/i }));
+
+    const stripText = screen.getByTestId("tool-execution-strip").textContent || "";
+    const summary = "Tìm được 5 nguồn: giaiphaphutam.com, nchmf.gov.vn, ventusky.com +2";
+    expect(stripText.includes(summary)).toBe(true);
+    expect(stripText.indexOf(summary)).toBe(stripText.lastIndexOf(summary));
+  });
+
+  it("renders structured source events inside summarized search tools", () => {
+    const block: ToolExecutionBlockData = {
+      type: "tool_execution",
+      id: "tool-search-sources",
+      status: "completed",
+      tool: {
+        id: "tool-search-sources",
+        name: "tool_web_search",
+        args: {
+          query: "thời tiết Hải Phòng hiện tại",
+        },
+        result: "Tìm được 2 nguồn: weather.example, meteo.example",
+        sources: [
+          {
+            title: "Hai Phong forecast",
+            content: "Cloudy and warm.",
+            url: "https://weather.example/hai-phong",
+            source_type: "web",
+          },
+          {
+            title: "Meteo forecast",
+            content: "Rain chance.",
+            url: "https://meteo.example/hai-phong",
+            source_type: "web",
+          },
+        ],
+        metadata: {
+          schema_version: "tool_result_metadata.v1",
+          status: "completed",
+          result_kind: "web_sources",
+          source_count: 2,
+          domains: ["weather.example", "meteo.example"],
+        },
+      },
+    };
+
+    render(<ToolExecutionStrip block={block} />);
+    fireEvent.click(screen.getByRole("button", { name: /Tìm kiếm web/i }));
+
+    expect(screen.getByText("Nguồn tìm được")).toBeTruthy();
+    expect(screen.getByText("Hai Phong forecast")).toBeTruthy();
+    expect(screen.getByText("weather.example")).toBeTruthy();
+    expect(screen.getByText("Meteo forecast")).toBeTruthy();
+    expect(screen.queryByText(/Tìm được 2 nguồn:/)).toBeNull();
+  });
+
+  it("skips unsafe structured source URLs", () => {
+    const block: ToolExecutionBlockData = {
+      type: "tool_execution",
+      id: "tool-search-unsafe-source",
+      status: "completed",
+      tool: {
+        id: "tool-search-unsafe-source",
+        name: "tool_web_search",
+        args: {
+          query: "weather",
+        },
+        result: "Tìm được 2 nguồn",
+        sources: [
+          {
+            title: "Unsafe source",
+            content: "Should not render.",
+            url: "javascript:alert(1)",
+            source_type: "web",
+          },
+          {
+            title: "Safe source",
+            content: "Safe.",
+            url: "https://safe.example/weather",
+            source_type: "web",
+          },
+        ],
+        metadata: {
+          schema_version: "tool_result_metadata.v1",
+          status: "completed",
+          result_kind: "web_sources",
+          source_count: 2,
+        },
+      },
+    };
+
+    const { container } = render(<ToolExecutionStrip block={block} />);
+    fireEvent.click(screen.getByRole("button"));
+
+    expect(screen.queryByText("Unsafe source")).toBeNull();
+    expect(screen.getByText("Safe source")).toBeTruthy();
+    expect(container.querySelector('a[href^="javascript:"]')).toBeNull();
+  });
+
+  it("renders no-source search metadata as a warning state", () => {
+    const block: ToolExecutionBlockData = {
+      type: "tool_execution",
+      id: "tool-search-empty",
+      status: "completed",
+      tool: {
+        id: "tool-search-empty",
+        name: "tool_web_search",
+        args: {
+          query: "weather nowhere current",
+        },
+        result: "No web results found for this query.",
+        metadata: {
+          schema_version: "tool_result_metadata.v1",
+          status: "unavailable",
+          result_kind: "web_sources",
+          reason_code: "no_sources",
+          source_count: 0,
+          domains: [],
+        },
+      },
+    };
+
+    render(<ToolExecutionStrip block={block} />);
+
+    const strip = screen.getByTestId("tool-execution-strip");
+    expect(strip.getAttribute("data-status")).toBe("unavailable");
+    expect(strip.getAttribute("data-state-tone")).toBe("warning");
+    expect(screen.getByText("Cần kiểm tra")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /Tìm kiếm web/i }));
+
+    expect(screen.getByText("Chưa tìm được nguồn phù hợp.")).toBeTruthy();
+  });
+
+  it("shows weather tool traces as location-aware status instead of a generic tool", () => {
+    const block: ToolExecutionBlockData = {
+      type: "tool_execution",
+      id: "tool-weather-1",
+      status: "completed",
+      tool: {
+        id: "tool-weather-1",
+        name: "current_weather",
+        args: {
+          city: "Hải Phòng",
+        },
+        result: "Chưa có kết nối thời tiết trực tiếp.",
+      },
+    };
+
+    render(<ToolExecutionStrip block={block} />);
+
+    const strip = screen.getByTestId("tool-execution-strip");
+    expect(strip.getAttribute("data-tool-kind")).toBe("weather");
+    expect(screen.getByText("Tra thời tiết")).toBeTruthy();
+    expect(screen.getByText("Địa điểm")).toBeTruthy();
+    expect(screen.getByText("Hải Phòng")).toBeTruthy();
+    expect(screen.queryByText("Tình trạng")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /Tra thời tiết/i }));
+
+    expect(screen.getByText("Tình trạng")).toBeTruthy();
+    expect(
+      screen.getByText("Chưa có kết nối thời tiết trực tiếp."),
+    ).toBeTruthy();
+  });
+
+  it("uses structured weather status before falling back to text matching", () => {
+    const block: ToolExecutionBlockData = {
+      type: "tool_execution",
+      id: "tool-weather-json",
+      status: "completed",
+      tool: {
+        id: "tool-weather-json",
+        name: "current_weather",
+        args: {
+          city: "Hải Phòng",
+        },
+        result: JSON.stringify({
+          status: "error",
+          reason_code: "no_data",
+          message: "Provider returned an empty response.",
+        }),
+      },
+    };
+
+    render(<ToolExecutionStrip block={block} />);
+    fireEvent.click(screen.getByRole("button", { name: /Tra thời tiết/i }));
+
+    expect(screen.getByText("Chưa lấy được thời tiết hiện tại.")).toBeTruthy();
+  });
+
+  it("uses weather metadata before generic result text", () => {
+    const block: ToolExecutionBlockData = {
+      type: "tool_execution",
+      id: "tool-weather-meta",
+      status: "completed",
+      tool: {
+        id: "tool-weather-meta",
+        name: "current_weather",
+        args: {
+          city: "Hải Phòng",
+        },
+        result: "Provider returned a generic failure.",
+        metadata: {
+          schema_version: "tool_result_metadata.v1",
+          status: "unavailable",
+          result_kind: "weather",
+          reason_code: "provider_unconfigured",
+        },
+      },
+    };
+
+    render(<ToolExecutionStrip block={block} />);
+
+    const strip = screen.getByTestId("tool-execution-strip");
+    expect(strip.getAttribute("data-state-tone")).toBe("warning");
+    expect(screen.getByText("Cần kiểm tra")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Tra thời tiết/i }));
+    expect(
+      screen.getByText("Chưa có kết nối thời tiết trực tiếp."),
+    ).toBeTruthy();
+  });
+
+  it("renders skipped duplicate weather search from metadata", () => {
+    const block: ToolExecutionBlockData = {
+      type: "tool_execution",
+      id: "tool-search-skip",
+      status: "completed",
+      tool: {
+        id: "tool-search-skip",
+        name: "tool_web_search",
+        args: {
+          query: "weather Hai Phong today",
+        },
+        result: "Additional search skipped.",
+        metadata: {
+          schema_version: "tool_result_metadata.v1",
+          status: "skipped",
+          result_kind: "text",
+          reason_code: "weather_search_fanout_limited",
+          skipped: true,
+        },
+      },
+    };
+
+    render(<ToolExecutionStrip block={block} />);
+
+    const strip = screen.getByTestId("tool-execution-strip");
+    expect(strip.getAttribute("data-status")).toBe("skipped");
+    expect(strip.getAttribute("data-state-tone")).toBe("muted");
+    expect(screen.getByText("Đã bỏ qua")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Tìm kiếm web/i }));
+    expect(
+      screen.getByText(
+        "Đã có đủ nguồn thời tiết, bỏ qua lượt tìm kiếm trùng.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("renders path-policy blocked side tools as deliberately skipped", () => {
+    const block: ToolExecutionBlockData = {
+      type: "tool_execution",
+      id: "tool-fetch-policy-blocked",
+      status: "completed",
+      tool: {
+        id: "tool-fetch-policy-blocked",
+        name: "tool_fetch_url",
+        args: {
+          url: "https://xemthoitiet.com.vn/hai-phong",
+        },
+        result: "Tool `tool_fetch_url` is not allowed for this path.",
+        metadata: {
+          schema_version: "tool_result_metadata.v1",
+          status: "blocked",
+          result_kind: "policy",
+          reason_code: "not_allowed_by_path_policy",
+          policy: {
+            allowed: false,
+            path: "weather_lookup",
+            reason: "not_allowed_by_path_policy",
+          },
+        },
+      },
+    };
+
+    render(<ToolExecutionStrip block={block} />);
+
+    const strip = screen.getByTestId("tool-execution-strip");
+    expect(strip.getAttribute("data-status")).toBe("blocked");
+    expect(strip.getAttribute("data-state-tone")).toBe("muted");
+    expect(screen.getByText("Đã bỏ qua")).toBeTruthy();
+    expect(screen.queryByText("Cần kiểm tra")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Đọc chi tiết URL/i }));
+    expect(
+      screen.getByText(
+        "Tool không phù hợp với luồng hiện tại nên đã bỏ qua.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("suppresses raw internal details when metadata provides the summary", () => {
+    const block: ToolExecutionBlockData = {
+      type: "tool_execution",
+      id: "tool-search-no-raw-detail",
+      status: "completed",
+      tool: {
+        id: "tool-search-no-raw-detail",
+        name: "tool_web_search",
+        args: {
+          query: "current weather",
+        },
+        result: "RAW_INTERNAL_SEARCH_DETAIL",
+        metadata: {
+          schema_version: "tool_result_metadata.v1",
+          status: "unavailable",
+          result_kind: "web_sources",
+          reason_code: "no_sources",
+          source_count: 0,
+          domains: [],
+        },
+      },
+    };
+
+    render(<ToolExecutionStrip block={block} />);
+    fireEvent.click(screen.getByRole("button"));
+
+    expect(
+      screen.getByTestId("tool-execution-strip").textContent || "",
+    ).not.toContain("RAW_INTERNAL_SEARCH_DETAIL");
+  });
+
+  it("suppresses raw weather JSON details when structured status provides the summary", () => {
+    const block: ToolExecutionBlockData = {
+      type: "tool_execution",
+      id: "tool-weather-no-raw-detail",
+      status: "completed",
+      tool: {
+        id: "tool-weather-no-raw-detail",
+        name: "current_weather",
+        args: {
+          city: "Hai Phong",
+        },
+        result: JSON.stringify({
+          status: "error",
+          reason_code: "no_data",
+          message: "RAW_INTERNAL_WEATHER_DETAIL",
+        }),
+      },
+    };
+
+    render(<ToolExecutionStrip block={block} />);
+    fireEvent.click(screen.getByRole("button"));
+
+    expect(
+      screen.getByTestId("tool-execution-strip").textContent || "",
+    ).not.toContain("RAW_INTERNAL_WEATHER_DETAIL");
+  });
+
+  it("marks pending tool calls as busy without inventing output", () => {
+    const block: ToolExecutionBlockData = {
+      type: "tool_execution",
+      id: "tool-search-pending",
+      status: "pending",
+      tool: {
+        id: "tool-search-pending",
+        name: "tool_web_search",
+        args: {
+          query: "NVIDIA models API",
+        },
+      },
+    };
+
+    render(<ToolExecutionStrip block={block} />);
+
+    const strip = screen.getByTestId("tool-execution-strip");
+    const button = screen.getByRole("button", { name: /Tìm kiếm web/i });
+    expect(strip.getAttribute("aria-busy")).toBe("true");
+    expect(strip.getAttribute("data-state-tone")).toBe("pending");
+    expect(button).toHaveProperty("disabled", true);
+    expect(screen.getByText("Đang gọi")).toBeTruthy();
+    expect(screen.getByText("NVIDIA models API")).toBeTruthy();
+    expect(screen.queryByText("Nguồn tìm được")).toBeNull();
+  });
+});

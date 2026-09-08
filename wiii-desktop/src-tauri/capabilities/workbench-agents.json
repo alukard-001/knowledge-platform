@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "workbench-agents",
+  "description": "Provider- and session-scoped authority for the Neko Rust runtime",
+  "windows": ["main"],
+  "permissions": [
+    "allow-neko-control-provider-list",
+    "allow-neko-control-provider-profiles",
+    "allow-neko-control-provider-sessions",
+    "allow-neko-control-session-list",
+    "allow-neko-control-session-start",
+    "allow-neko-control-session-write",
+    "allow-neko-control-session-cancel",
+    "allow-neko-control-events-read"
+  ]
+}
